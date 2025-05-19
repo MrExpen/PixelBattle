@@ -1,4 +1,5 @@
 ﻿// See https://aka.ms/new-console-template for more information
+
 using PixelBattle;
 
 const string path = "test.pbdexpn";

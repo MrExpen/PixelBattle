@@ -2,6 +2,8 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PixelBattle", "PixelBattle\PixelBattle.csproj", "{D9B07311-CDB8-442D-9DE6-CD7975897034}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PixelBattle.Tests", "PixelBattle.Tests\PixelBattle.Tests.csproj", "{A6C2FD25-7F5B-4221-A8C1-DEAA6566E690}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -12,5 +14,9 @@ Global
 		{D9B07311-CDB8-442D-9DE6-CD7975897034}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D9B07311-CDB8-442D-9DE6-CD7975897034}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D9B07311-CDB8-442D-9DE6-CD7975897034}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A6C2FD25-7F5B-4221-A8C1-DEAA6566E690}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A6C2FD25-7F5B-4221-A8C1-DEAA6566E690}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A6C2FD25-7F5B-4221-A8C1-DEAA6566E690}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A6C2FD25-7F5B-4221-A8C1-DEAA6566E690}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

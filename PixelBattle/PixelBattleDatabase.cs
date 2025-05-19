@@ -1,38 +1,41 @@
-﻿using System.Diagnostics;
+﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
+using PixelBattle.Structures;
 
 namespace PixelBattle;
 
 public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
 {
     private static readonly byte[] MagicBytes = "PBDFEXPN"u8.ToArray();
-    private static readonly long MagicNumber = MemoryMarshal.Read<long>(MagicBytes);
-    private const int CurrentVersion = 1;
+    private static ulong MagicNumber => MemoryMarshal.Read<ulong>(MagicBytes);
+    private static readonly int SizeOfRaw = Marshal.SizeOf<DatabaseRecord>();
+    private const uint CurrentVersion = 1;
 
-    private const int BytesForColor = 1;
-    private const int PageSize = 4096;
+    private readonly uint _width;
+    private readonly uint _height;
 
+    private readonly ConcurrentQueue<DatabaseRecord> _concurrentQueue = new();
+    
     private readonly FileStream _fileStream;
     private readonly MemoryMappedFile _memoryMappedFile;
     private readonly MemoryMappedViewAccessor _accessor;
     private readonly WriteAheadLog _writeAheadLog;
 
-    private PixelBattleDatabase(FileStream fileStream, WriteAheadLog wal, int width, int height)
+    private PixelBattleDatabase(FileStream fileStream, WriteAheadLog wal, uint width, uint height)
     {
         _fileStream = fileStream;
         _writeAheadLog = wal;
+        _width = width;
+        _height = height;
+        
         _memoryMappedFile = MemoryMappedFile.CreateFromFile(_fileStream, null, 0, MemoryMappedFileAccess.ReadWrite,
             HandleInheritability.None, true);
         _accessor = _memoryMappedFile.CreateViewAccessor(_fileStream.Position,
             _fileStream.Length - _fileStream.Position,
             MemoryMappedFileAccess.ReadWrite);
     }
-
-    public void Set(int width, int height, byte color)
-    {
-    }
-
 
     public void Dispose()
     {
@@ -48,53 +51,42 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         await _fileStream.DisposeAsync();
     }
 
-    public static PixelBattleDatabase Create(string path, int width, int height)
+    public static PixelBattleDatabase Create(string path, uint width, uint height)
     {
-        Debug.Assert(MagicBytes.Length == Marshal.SizeOf<long>());
+        Debug.Assert(MagicBytes.Length == Marshal.SizeOf<ulong>());
 
         var fs = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
-        fs.Write(MagicBytes); // Magic number (4 bytes)
-        Span<byte> buff = stackalloc byte[4];
 
-        MemoryMarshal.Write(buff, CurrentVersion);
-        fs.Write(buff); // Version (4 bytes)
+        var headers = new Headers(MagicNumber, CurrentVersion, width, height);
+        Span<byte> buff = stackalloc byte[Marshal.SizeOf<Headers>()];
+        MemoryMarshal.Write(buff, headers);
+        fs.Write(buff);
 
-        MemoryMarshal.Write(buff, width);
-        fs.Write(buff); // Width (4 bytes)
-
-        MemoryMarshal.Write(buff, height);
-        fs.Write(buff); // Height (4 bytes)
-
-        fs.SetLength(width * height * BytesForColor + 12 + MagicBytes.Length); // 12 - Version + Width + Height
+        fs.SetLength(width * height * SizeOfRaw + Marshal.SizeOf<Headers>()); // 12 - Version + Width + Height
         return new PixelBattleDatabase(fs, new WriteAheadLog(GetWalFileName(path)), width, height);
     }
 
     public static PixelBattleDatabase Open(string path)
     {
-        Debug.Assert(MagicBytes.Length == Marshal.SizeOf<long>());
+        Debug.Assert(MagicBytes.Length == Marshal.SizeOf<ulong>());
 
         var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 
-        Span<byte> buff = stackalloc byte[MagicBytes.Length + 4];
-
+        Span<byte> buff = stackalloc byte[Marshal.SizeOf<Headers>()];
         fs.ReadExactly(buff);
-        var magicNumber = MemoryMarshal.Read<long>(buff[..MagicBytes.Length]);
-        if (magicNumber != MagicNumber)
+        var headers = MemoryMarshal.Read<Headers>(buff);
+
+        if (headers.MagicNumber != MagicNumber)
         {
             throw new InvalidOperationException("Not supported file");
         }
 
-        var version = MemoryMarshal.Read<int>(buff[MagicBytes.Length..]);
-        if (version != CurrentVersion)
+        if (headers.Version != CurrentVersion)
         {
             throw new InvalidOperationException("Version not supported");
         }
 
-        fs.ReadExactly(buff[..8]);
-        var width = MemoryMarshal.Read<int>(buff[..4]);
-        var height = MemoryMarshal.Read<int>(buff[4..]);
-
-        return new PixelBattleDatabase(fs, new WriteAheadLog(GetWalFileName(path)), width, height);
+        return new PixelBattleDatabase(fs, new WriteAheadLog(GetWalFileName(path)), headers.Width, headers.Height);
     }
 
     private static string GetWalFileName(string dbName)
