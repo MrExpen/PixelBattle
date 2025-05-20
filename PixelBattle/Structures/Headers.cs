@@ -1,9 +1,7 @@
-﻿using System.Runtime.InteropServices;
-using PixelBattle.Binary;
+﻿using PixelBattle.Binary;
 
 namespace PixelBattle.Structures;
 
-[StructLayout(LayoutKind.Sequential, Pack = 2)]
 public readonly struct Headers : IBinarySerializable<Headers>
 {
     public static int BinaryLength => 20;
@@ -21,7 +19,11 @@ public readonly struct Headers : IBinarySerializable<Headers>
         Height = height;
     }
 
-    public static Headers Read(ReadOnlySpan<byte> buffer) => Utils.Read<Headers>(buffer);
+    public static Headers Read(ReadOnlySpan<byte> buffer) => Utils.Read<Headers>(buffer, BinaryLength);
 
-    public int Write(Span<byte> buffer) => Utils.Write(this, buffer);
+    public int Write(Span<byte> buffer)
+    {
+        Utils.Write(this, buffer, BinaryLength);
+        return BinaryLength;
+    }
 }

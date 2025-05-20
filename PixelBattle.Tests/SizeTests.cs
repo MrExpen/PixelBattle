@@ -1,5 +1,4 @@
-﻿using System.Reflection;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using PixelBattle.Binary;
 using PixelBattle.Structures;
 
@@ -9,6 +8,7 @@ public class SizeTests
 {
     [Theory]
     [InlineData(typeof(Headers), 20)]
+    [InlineData(typeof(WalRecord), 17)]
     public void SizeOfFields(Type type, int size)
     {
         var fields = type.GetFields().Where(x => !x.IsStatic);
@@ -19,6 +19,7 @@ public class SizeTests
 
     [Theory]
     [InlineData(typeof(Headers))]
+    [InlineData(typeof(WalRecord))]
     public void SizeOfFieldsBinaryLength(Type type)
     {
         var fields = type.GetFields().Where(x => !x.IsStatic);
