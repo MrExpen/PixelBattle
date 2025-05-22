@@ -10,5 +10,6 @@ await using var db = PixelBattleDatabase.Open(path);
 
 db.Set(0, 0, 1);
 db.Set(1, 0, 255);
+var data = db.GetAll();
 
 Console.WriteLine();

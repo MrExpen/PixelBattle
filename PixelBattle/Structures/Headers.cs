@@ -7,11 +7,11 @@ public readonly struct Headers : IBinarySerializable<Headers>
     public static int BinaryLength => 20;
 
     public readonly ulong MagicNumber;
-    public readonly uint Version;
-    public readonly uint Width;
-    public readonly uint Height;
+    public readonly int Version;
+    public readonly int Width;
+    public readonly int Height;
 
-    public Headers(ulong magicNumber, uint version, uint width, uint height)
+    public Headers(ulong magicNumber, int version, int width, int height)
     {
         MagicNumber = magicNumber;
         Version = version;

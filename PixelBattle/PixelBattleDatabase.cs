@@ -10,23 +10,23 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
 {
     private static readonly byte[] MagicBytes = "PBDFEXPN"u8.ToArray();
     private static ulong MagicNumber => MemoryMarshal.Read<ulong>(MagicBytes);
-    private const uint CurrentVersion = 1;
+    private const int CurrentVersion = 1;
 
-    private readonly uint _width;
-    private readonly uint _height;
+    private readonly int _width;
+    private readonly int _height;
 
-    private readonly Lock _walLock;
+    private readonly Lock _lock;
 
     private readonly FileStream _dbFileStream;
     private readonly FileStream _walFileStream;
     private readonly MemoryMappedFile _memoryMappedFile;
     private readonly MemoryMappedViewAccessor _accessor;
 
-    private PixelBattleDatabase(FileStream dbFileStream, FileStream walFileStream, uint width, uint height)
+    private PixelBattleDatabase(FileStream dbFileStream, FileStream walFileStream, int width, int height)
     {
         _dbFileStream = dbFileStream;
         _walFileStream = walFileStream;
-        _walLock = new Lock();
+        _lock = new Lock();
         _width = width;
         _height = height;
 
@@ -40,20 +40,47 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
     public void Set(int x, int y, byte color)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(x);
-        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual((uint)x, _width);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(x, _width);
         ArgumentOutOfRangeException.ThrowIfNegative(y);
-        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual((uint)y, _height);
-        
-        lock (_walLock)
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(y, _height);
+
+        lock (_lock)
         {
             var walRecord = new WalRecord(TimeProvider.System.GetTimestamp(), (uint)x, (uint)y, color);
             _walFileStream.Write(Utils.ToSpan(ref walRecord));
             _walFileStream.Flush(true);
-            
+
             var offset = y * _width + x;
             _accessor.Write(offset, color);
             _accessor.Flush();
         }
+    }
+
+    public byte Get(int x, int y)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(x);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(x, _width);
+        ArgumentOutOfRangeException.ThrowIfNegative(y);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(y, _height);
+
+        var offset = y * _width + x;
+        lock (_lock)
+        {
+            return _accessor.ReadByte(offset);
+        }
+    }
+
+    public byte[] GetAll()
+    {
+        var size = _height * _width;
+        var buffer = new byte[size];
+
+        lock (_lock)
+        {
+            _accessor.SafeMemoryMappedViewHandle.ReadSpan((ulong)_accessor.PointerOffset, buffer.AsSpan());
+        }
+
+        return buffer;
     }
 
     public void Dispose()
@@ -72,7 +99,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         await _dbFileStream.DisposeAsync();
     }
 
-    public static PixelBattleDatabase Create(string path, uint width, uint height)
+    public static PixelBattleDatabase Create(string path, int width, int height)
     {
         Debug.Assert(MagicBytes.Length == Marshal.SizeOf<ulong>());
         FileStream? dbStream = null, walStream = null;
