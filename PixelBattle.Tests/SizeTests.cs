@@ -8,7 +8,7 @@ public class SizeTests
 {
     [Theory(Skip = "Disabled")]
     [InlineData(typeof(DbHeaders), 20)]
-    [InlineData(typeof(ChangeOneColorRecord), 17)]
+    [InlineData(typeof(WalRecord), 17)]
     public void SizeOfFields(Type type, int size)
     {
         var fields = type.GetFields().Where(x => !x.IsStatic);
@@ -19,8 +19,7 @@ public class SizeTests
 
     [Theory]
     [InlineData(typeof(DbHeaders))]
-    [InlineData(typeof(ChangeOneColorRecord))]
-    [InlineData(typeof(WalRecordHeaders))]
+    [InlineData(typeof(WalRecord))]
     public void SizeOfFieldsBinaryLength(Type type)
     {
         var fields = type.GetFields().Where(x => !x.IsStatic);

@@ -1,4 +1,5 @@
 ﻿using System.Threading.Channels;
+using PixelBattle.Binary;
 using PixelBattle.Structures;
 
 namespace PixelBattle;
@@ -7,15 +8,16 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
 {
     private const int WalBufferSize = 4096;
     private const int WalMaxBatch = 100;
+    private const double BatchIntervalMicroseconds = 0;
     private const uint Version = 1;
 
     private readonly TimeProvider _timeProvider;
     private readonly FileStream _walFileStream;
     private readonly Channel<WalAckRecord> _walChannel;
-    private readonly Channel<CommitedWalRecord> _commitedChannel;
+    private readonly List<WalRecord> _commitedList;
     private readonly Task _groupedCommitTask;
 
-    private WriteAheadLog(FileStream walFileStream)
+    private WriteAheadLog(FileStream walFileStream, List<WalRecord> commitedList)
     {
         _walFileStream = walFileStream;
         _timeProvider = TimeProvider.System;
@@ -25,20 +27,15 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
             AllowSynchronousContinuations = false,
             SingleReader = true,
         });
-        _commitedChannel = Channel.CreateUnbounded<CommitedWalRecord>(new UnboundedChannelOptions
-        {
-            AllowSynchronousContinuations = false,
-            SingleReader = true,
-            SingleWriter = true
-        });
+        _commitedList = commitedList;
         _groupedCommitTask = GroupedWalCommitAsync(CancellationToken.None);
     }
 
-    public async Task Add(ChangeOneColorRecord record)
+    public async Task AppendAsync(UpdateColor record)
     {
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        await _walChannel.Writer.WriteAsync(new WalAckRecord(OperationType.ChangeOne, record, tcs));
+        await _walChannel.Writer.WriteAsync(new WalAckRecord(record, tcs));
 
         await tcs.Task;
     }
@@ -46,44 +43,38 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
     private async Task GroupedWalCommitAsync(CancellationToken cancellationToken)
     {
         var reader = _walChannel.Reader;
-        var writer = _commitedChannel.Writer;
+        var deltaFreq = (long)(BatchIntervalMicroseconds * TimeSpan.TicksPerSecond * TimeSpan.TicksPerMicrosecond /
+                               _timeProvider.TimestampFrequency);
 
         var batch = new List<WalAckRecord>(WalMaxBatch);
-        var buffer = new byte[WalRecordHeaders.BinaryLength + ChangeOneColorRecord.BinaryLength];
+        var commitedBatch = new List<WalRecord>(WalMaxBatch);
         while (!cancellationToken.IsCancellationRequested && await reader.WaitToReadAsync(cancellationToken))
         {
-            //TODO Add delay to batch
             try
             {
-                while (batch.Count < WalMaxBatch && reader.TryRead(out var record))
+                var startTimestamp = _timeProvider.GetTimestamp();
+                do
                 {
-                    batch.Add(record);
-                }
+                    while (batch.Count < WalMaxBatch && reader.TryRead(out var record))
+                    {
+                        batch.Add(record);
+                    }
+                } while (_timeProvider.GetTimestamp() - startTimestamp < deltaFreq && batch.Count < WalMaxBatch);
+
 
                 try
                 {
                     foreach (var walAckRecord in batch)
                     {
-                        //TODO add try catch inside
-                        var headers = new WalRecordHeaders(
-                            _timeProvider.GetUtcNow().ToUnixTimeMilliseconds(),
+                        var walRecord = new WalRecord(
+                            _timeProvider.GetUtcNow().Ticks,
                             Version,
-                            walAckRecord.Operation
+                            walAckRecord.UpdateColor.X,
+                            walAckRecord.UpdateColor.Y,
+                            walAckRecord.UpdateColor.Color
                         );
-                        var written = headers.Write(buffer);
-
-                        switch (walAckRecord.Operation)
-                        {
-                            case OperationType.Sync:
-                                break;
-                            case OperationType.ChangeOne:
-                                written += walAckRecord.ChangeOneColorRecord!.Value.Write(buffer.AsSpan(written));
-                                break;
-                            default:
-                                throw new ArgumentOutOfRangeException();
-                        }
-
-                        _walFileStream.Write(buffer, 0, written);
+                        _walFileStream.Write(Utils.ToSpan(ref walRecord));
+                        commitedBatch.Add(walRecord);
                     }
 
                     _walFileStream.Flush(true);
@@ -95,41 +86,39 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
                         record.TaskCompletionSource.TrySetException(e);
                     }
 
-                    continue;
+                    continue; //TODO may be throw;
                 }
 
                 foreach (var walAckRecord in batch)
                 {
                     walAckRecord.TaskCompletionSource.SetResult();
-
-                    if (walAckRecord.Operation == OperationType.ChangeOne)
-                    {
-                        await writer.WriteAsync(new CommitedWalRecord(walAckRecord.ChangeOneColorRecord!.Value));
-                    }
                 }
+
+                _commitedList.AddRange(commitedBatch);
             }
             finally
             {
                 batch.Clear();
+                commitedBatch.Clear();
             }
         }
     }
 
-    public static WriteAheadLog CreateNew(string path)
+    public static WriteAheadLog Create(string path)
     {
         FileStream? stream = null;
         try
         {
             stream = new FileStream(
                 path,
-                FileMode.CreateNew,
+                FileMode.Create,
                 FileAccess.ReadWrite,
                 FileShare.Read,
                 WalBufferSize,
                 FileOptions.SequentialScan
             );
 
-            return new WriteAheadLog(stream);
+            return new WriteAheadLog(stream, []);
         }
         catch
         {
@@ -152,9 +141,16 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
                 FileOptions.SequentialScan
             );
 
-            //Todo read
+            var list = new List<WalRecord>();
+            WalRecord record = default;
+            var recordSpan = Utils.ToSpan(ref record);
+            while (stream.Position + WalRecord.BinaryLength <= stream.Length)
+            {
+                stream.ReadExactly(recordSpan);
+                list.Add(record);
+            }
 
-            return new WriteAheadLog(stream);
+            return new WriteAheadLog(stream, list);
         }
         catch
         {
@@ -163,38 +159,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
         }
     }
 
-    public static WriteAheadLog Open(string path)
-    {
-        FileStream? stream = null;
-        try
-        {
-            stream = new FileStream(
-                path,
-                FileMode.Open,
-                FileAccess.ReadWrite,
-                FileShare.Read,
-                WalBufferSize,
-                FileOptions.SequentialScan
-            );
-
-            //Todo read
-
-            return new WriteAheadLog(stream);
-        }
-        catch
-        {
-            stream?.Dispose();
-            throw;
-        }
-    }
-
-    private record WalAckRecord(
-        OperationType Operation,
-        ChangeOneColorRecord? ChangeOneColorRecord,
-        TaskCompletionSource TaskCompletionSource
-    );
-
-    public record CommitedWalRecord(ChangeOneColorRecord ChangeOneColorRecord);
+    private record WalAckRecord(UpdateColor UpdateColor, TaskCompletionSource TaskCompletionSource);
 
     public void Dispose()
     {

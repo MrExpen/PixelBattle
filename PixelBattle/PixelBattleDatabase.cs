@@ -41,7 +41,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         ArgumentOutOfRangeException.ThrowIfNegative(y);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(y, _height);
 
-        await _writeAheadLog.Add(new ChangeOneColorRecord(x, y, color));
+        await _writeAheadLog.AppendAsync(new UpdateColor(x, y, color));
     }
 
     public void Dispose()
@@ -57,7 +57,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         await _writeAheadLog.DisposeAsync();
         _accessor.Dispose();
         _memoryMappedFile.Dispose();
-        await _dbFileStream.DisposeAsync();
+         await _dbFileStream.DisposeAsync();
     }
 
     public static PixelBattleDatabase Create(string path, int width, int height)
@@ -76,7 +76,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
 
             dbStream.Write(Utils.ToSpan(ref headers));
 
-            wal = WriteAheadLog.CreateNew(GetWalFileName(path));
+            wal = WriteAheadLog.Create(GetWalFileName(path));
 
             return new PixelBattleDatabase(
                 dbStream,
@@ -117,7 +117,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
                 throw new InvalidOperationException("Version not supported");
             }
 
-            wal = WriteAheadLog.OpenOrCreate(path);
+            wal = WriteAheadLog.OpenOrCreate(GetWalFileName(path));
 
             return new PixelBattleDatabase(
                 dbStream,

@@ -2,6 +2,7 @@
 
 namespace PixelBattle.Structures;
 
+[Serializable]
 public readonly struct DbHeaders : IBinarySerializable<DbHeaders>
 {
     public static int BinaryLength => 20;
