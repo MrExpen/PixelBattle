@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
+using System.Threading.Channels;
 using PixelBattle.Binary;
 using PixelBattle.Structures;
 
@@ -8,27 +9,40 @@ namespace PixelBattle;
 
 public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
 {
+    private const int WalBufferSize = 4096;
+    private const int WalMaxBatch = 100;
+
     private static readonly byte[] MagicBytes = "PBDFEXPN"u8.ToArray();
     private static ulong MagicNumber => MemoryMarshal.Read<ulong>(MagicBytes);
-    private const int CurrentVersion = 1;
+    private const uint CurrentVersion = 1;
 
     private readonly int _width;
     private readonly int _height;
 
-    private readonly Lock _lock;
+    private readonly TimeProvider _timeProvider;
 
     private readonly FileStream _dbFileStream;
     private readonly FileStream _walFileStream;
     private readonly MemoryMappedFile _memoryMappedFile;
     private readonly MemoryMappedViewAccessor _accessor;
 
+    private readonly Channel<WalAckRecord> _walChannel;
+
     private PixelBattleDatabase(FileStream dbFileStream, FileStream walFileStream, int width, int height)
     {
+        _timeProvider = TimeProvider.System;
         _dbFileStream = dbFileStream;
         _walFileStream = walFileStream;
-        _lock = new Lock();
         _width = width;
         _height = height;
+        //Todo remove magic number
+        _walChannel = Channel.CreateBounded<WalAckRecord>(new BoundedChannelOptions(WalMaxBatch)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            AllowSynchronousContinuations = false,
+            SingleReader = true,
+        });
+        _ = GroupedWalCommitAsync(CancellationToken.None);
 
         _memoryMappedFile = MemoryMappedFile.CreateFromFile(_dbFileStream, null, 0, MemoryMappedFileAccess.ReadWrite,
             HandleInheritability.None, true);
@@ -37,54 +51,96 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
             MemoryMappedFileAccess.ReadWrite);
     }
 
-    public void Set(int x, int y, byte color)
+    public async Task SetAsync(int x, int y, byte color)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(x);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(x, _width);
         ArgumentOutOfRangeException.ThrowIfNegative(y);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(y, _height);
 
-        lock (_lock)
-        {
-            var walRecord = new WalRecord(TimeProvider.System.GetTimestamp(), (uint)x, (uint)y, color);
-            _walFileStream.Write(Utils.ToSpan(ref walRecord));
-            _walFileStream.Flush(true);
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            var offset = y * _width + x;
-            _accessor.Write(offset, color);
-            _accessor.Flush();
-        }
+        await _walChannel.Writer.WriteAsync(
+            new WalAckRecord(
+                OperationType.ChangeOne,
+                new ChangeOneColorRecord(x, y, color),
+                tcs
+            )
+        );
+
+        await tcs.Task;
     }
 
-    public byte Get(int x, int y)
+    private async Task GroupedWalCommitAsync(CancellationToken cancellationToken)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(x);
-        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(x, _width);
-        ArgumentOutOfRangeException.ThrowIfNegative(y);
-        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(y, _height);
+        var reader = _walChannel.Reader;
 
-        var offset = y * _width + x;
-        lock (_lock)
+        var batch = new List<WalAckRecord>(WalMaxBatch);
+        var buffer = new byte[WalRecordHeaders.BinaryLength + ChangeOneColorRecord.BinaryLength];
+        while (!cancellationToken.IsCancellationRequested && await reader.WaitToReadAsync(cancellationToken))
         {
-            return _accessor.ReadByte(offset);
+            //TODO Add delay to batch
+            try
+            {
+                while (batch.Count < WalMaxBatch && reader.TryRead(out var record))
+                {
+                    batch.Add(record);
+                }
+
+                try
+                {
+                    foreach (var walAckRecord in batch)
+                    {
+                        //TODO add try catch inside
+                        var headers = new WalRecordHeaders(
+                            _timeProvider.GetUtcNow().ToUnixTimeMilliseconds(),
+                            CurrentVersion,
+                            walAckRecord.Operation
+                        );
+                        var written = headers.Write(buffer);
+
+                        switch (walAckRecord.Operation)
+                        {
+                            case OperationType.Sync:
+                                break;
+                            case OperationType.ChangeOne:
+                                written += walAckRecord.ChangeOneColorRecord!.Value.Write(buffer.AsSpan(written));
+                                break;
+                            default:
+                                throw new ArgumentOutOfRangeException();
+                        }
+
+
+                        _walFileStream.Write(buffer, 0, written);
+                    }
+
+                    _walFileStream.Flush(true);
+                }
+                catch (Exception e)
+                {
+                    foreach (var record in batch)
+                    {
+                        record.TaskCompletionSource.TrySetException(e);
+                    }
+
+                    continue;
+                }
+
+                foreach (var walAckRecord in batch)
+                {
+                    walAckRecord.TaskCompletionSource.SetResult();
+                }
+            }
+            finally
+            {
+                batch.Clear();
+            }
         }
-    }
-
-    public byte[] GetAll()
-    {
-        var size = _height * _width;
-        var buffer = new byte[size];
-
-        lock (_lock)
-        {
-            _accessor.SafeMemoryMappedViewHandle.ReadSpan((ulong)_accessor.PointerOffset, buffer.AsSpan());
-        }
-
-        return buffer;
     }
 
     public void Dispose()
     {
+        _walChannel.Writer.TryComplete();
         _walFileStream.Dispose();
         _accessor.Dispose();
         _memoryMappedFile.Dispose();
@@ -93,6 +149,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _walChannel.Writer.TryComplete();
         await _walFileStream.DisposeAsync();
         _accessor.Dispose();
         _memoryMappedFile.Dispose();
@@ -108,9 +165,9 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         {
             dbStream = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.Read);
 
-            dbStream.SetLength(Headers.BinaryLength + width * height);
+            dbStream.SetLength(DbHeaders.BinaryLength + width * height);
 
-            var headers = new Headers(MagicNumber, CurrentVersion, width, height);
+            var headers = new DbHeaders(MagicNumber, CurrentVersion, width, height);
 
             dbStream.Write(Utils.ToSpan(ref headers));
 
@@ -118,7 +175,9 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
                 GetWalFileName(path),
                 FileMode.Create,
                 FileAccess.ReadWrite,
-                FileShare.Read
+                FileShare.Read,
+                WalBufferSize,
+                FileOptions.SequentialScan
             );
 
             return new PixelBattleDatabase(
@@ -147,31 +206,33 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         {
             dbStream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
 
-            Headers headers = default;
-            dbStream.ReadExactly(Utils.ToSpan(ref headers));
+            DbHeaders dbHeaders = default;
+            dbStream.ReadExactly(Utils.ToSpan(ref dbHeaders));
 
-            if (headers.MagicNumber != MagicNumber)
+            if (dbHeaders.MagicNumber != MagicNumber)
             {
                 throw new InvalidOperationException("Not supported file");
             }
 
-            if (headers.Version != CurrentVersion)
+            if (dbHeaders.Version != CurrentVersion)
             {
                 throw new InvalidOperationException("Version not supported");
             }
 
             walStream = new FileStream(
                 GetWalFileName(path),
-                FileMode.OpenOrCreate,
+                FileMode.Open,
                 FileAccess.ReadWrite,
-                FileShare.Read
+                FileShare.Read,
+                WalBufferSize,
+                FileOptions.SequentialScan
             );
 
             return new PixelBattleDatabase(
                 dbStream,
                 walStream,
-                headers.Width,
-                headers.Height
+                dbHeaders.Width,
+                dbHeaders.Height
             );
         }
         catch
@@ -187,4 +248,9 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
     {
         return dbName + "-wal";
     }
+
+    private record WalAckRecord(
+        OperationType Operation,
+        ChangeOneColorRecord? ChangeOneColorRecord,
+        TaskCompletionSource TaskCompletionSource);
 }

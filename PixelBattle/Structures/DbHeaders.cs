@@ -2,16 +2,16 @@
 
 namespace PixelBattle.Structures;
 
-public readonly struct Headers : IBinarySerializable<Headers>
+public readonly struct DbHeaders : IBinarySerializable<DbHeaders>
 {
     public static int BinaryLength => 20;
 
     public readonly ulong MagicNumber;
-    public readonly int Version;
+    public readonly uint Version;
     public readonly int Width;
     public readonly int Height;
 
-    public Headers(ulong magicNumber, int version, int width, int height)
+    public DbHeaders(ulong magicNumber, uint version, int width, int height)
     {
         MagicNumber = magicNumber;
         Version = version;
@@ -19,7 +19,7 @@ public readonly struct Headers : IBinarySerializable<Headers>
         Height = height;
     }
 
-    public static Headers Read(ReadOnlySpan<byte> buffer) => Utils.Read<Headers>(buffer, BinaryLength);
+    public static DbHeaders Read(ReadOnlySpan<byte> buffer) => Utils.Read<DbHeaders>(buffer, BinaryLength);
 
     public int Write(Span<byte> buffer)
     {

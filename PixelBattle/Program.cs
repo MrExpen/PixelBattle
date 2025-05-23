@@ -5,11 +5,9 @@ using PixelBattle;
 const string path = "test.pbdexpn";
 
 
-await using (var pixelBattleDatabase = PixelBattleDatabase.Create(path, 1024, 1024)) ;
-await using var db = PixelBattleDatabase.Open(path);
+await using var db = PixelBattleDatabase.Create(path, 1024, 1024);
 
-db.Set(0, 0, 1);
-db.Set(1, 0, 255);
-var data = db.GetAll();
+await db.SetAsync(0, 0, 1);
+await db.SetAsync(1, 0, 255);
 
 Console.WriteLine();
