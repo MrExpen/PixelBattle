@@ -236,7 +236,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
         using var mmf = MemoryMappedFile.CreateFromFile(stream, null, 0,
             MemoryMappedFileAccess.ReadWrite,
             HandleInheritability.None, true);
-        using var accessor = mmf.CreateViewAccessor(0, count * WalRecord.BinaryLength);
+        using var accessor = mmf.CreateViewAccessor(0, (r - l + 1) * WalRecord.BinaryLength);
 
         while (l < r)
         {
