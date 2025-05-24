@@ -1,4 +1,7 @@
-﻿using System.Threading.Channels;
+﻿using System.IO.MemoryMappedFiles;
+using System.Runtime.InteropServices;
+using System.Threading.Channels;
+using System.Threading.Tasks.Sources;
 using PixelBattle.Binary;
 using PixelBattle.Structures;
 
@@ -6,18 +9,24 @@ namespace PixelBattle;
 
 public class WriteAheadLog : IAsyncDisposable, IDisposable
 {
+    private const long WalMmfScanCountThreshold = 1024 * 1024;
+    private const int ScanLastCount = 5;
     private const int WalBufferSize = 4096;
-    private const int WalMaxBatch = 100;
-    private const double BatchIntervalMicroseconds = 0;
     private const uint Version = 1;
+
+    //TODO get from constructor
+    private const int WalMaxBatch = 4096;
+    private const double BatchIntervalMicroseconds = 0;
 
     private readonly TimeProvider _timeProvider;
     private readonly FileStream _walFileStream;
     private readonly Channel<WalAckRecord> _walChannel;
-    private readonly List<WalRecord> _commitedList;
+    private readonly Channel<WalRecord> _commitedChannel;
     private readonly Task _groupedCommitTask;
 
-    private WriteAheadLog(FileStream walFileStream, List<WalRecord> commitedList)
+    public ChannelReader<WalRecord> CommitedReader => _commitedChannel.Reader;
+
+    private WriteAheadLog(FileStream walFileStream, Channel<WalRecord> commitedChannel)
     {
         _walFileStream = walFileStream;
         _timeProvider = TimeProvider.System;
@@ -27,28 +36,29 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
             AllowSynchronousContinuations = false,
             SingleReader = true,
         });
-        _commitedList = commitedList;
-        _groupedCommitTask = GroupedWalCommitAsync(CancellationToken.None);
+        _commitedChannel = commitedChannel;
+        _groupedCommitTask = GroupedWalCommitAsync();
     }
 
     public async Task AppendAsync(UpdateColor record)
     {
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
+        
         await _walChannel.Writer.WriteAsync(new WalAckRecord(record, tcs));
 
         await tcs.Task;
     }
 
-    private async Task GroupedWalCommitAsync(CancellationToken cancellationToken)
+    private async Task GroupedWalCommitAsync()
     {
         var reader = _walChannel.Reader;
+        var writer = _commitedChannel.Writer;
         var deltaFreq = (long)(BatchIntervalMicroseconds * TimeSpan.TicksPerSecond * TimeSpan.TicksPerMicrosecond /
                                _timeProvider.TimestampFrequency);
 
         var batch = new List<WalAckRecord>(WalMaxBatch);
         var commitedBatch = new List<WalRecord>(WalMaxBatch);
-        while (!cancellationToken.IsCancellationRequested && await reader.WaitToReadAsync(cancellationToken))
+        while (await reader.WaitToReadAsync())
         {
             try
             {
@@ -94,7 +104,10 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
                     walAckRecord.TaskCompletionSource.SetResult();
                 }
 
-                _commitedList.AddRange(commitedBatch);
+                foreach (var walRecord in commitedBatch)
+                {
+                    await writer.WriteAsync(walRecord);
+                }
             }
             finally
             {
@@ -118,7 +131,14 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
                 FileOptions.SequentialScan
             );
 
-            return new WriteAheadLog(stream, []);
+            var channel = Channel.CreateUnbounded<WalRecord>(new UnboundedChannelOptions
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                AllowSynchronousContinuations = false,
+            });
+
+            return new WriteAheadLog(stream, channel);
         }
         catch
         {
@@ -127,7 +147,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
         }
     }
 
-    public static WriteAheadLog OpenOrCreate(string path)
+    public static async Task<WriteAheadLog> OpenOrCreateAsync(string path, long lastAppliedTimestamp)
     {
         FileStream? stream = null;
         try
@@ -137,26 +157,102 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
                 FileMode.OpenOrCreate,
                 FileAccess.ReadWrite,
                 FileShare.Read,
-                WalBufferSize,
-                FileOptions.SequentialScan
+                WalBufferSize
             );
 
-            var list = new List<WalRecord>();
-            WalRecord record = default;
-            var recordSpan = Utils.ToSpan(ref record);
+            var channel = Channel.CreateUnbounded<WalRecord>(new UnboundedChannelOptions
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                AllowSynchronousContinuations = false,
+            });
+
+            var commitedIndex = GetWalCommitedIndex(stream, lastAppliedTimestamp);
+
+            stream.Seek(commitedIndex * WalRecord.BinaryLength, SeekOrigin.Begin);
+
+            var writer = channel.Writer;
             while (stream.Position + WalRecord.BinaryLength <= stream.Length)
             {
-                stream.ReadExactly(recordSpan);
-                list.Add(record);
+                WalRecord record = default;
+                stream.ReadExactly(Utils.ToSpan(ref record));
+                await writer.WriteAsync(record);
             }
 
-            return new WriteAheadLog(stream, list);
+            return new WriteAheadLog(stream, channel);
         }
         catch
         {
-            stream?.Dispose();
+            if (stream is not null)
+            {
+                await stream.DisposeAsync();
+            }
+
             throw;
         }
+    }
+
+    private static long GetWalCommitedIndex(FileStream stream, long lastAppliedTimestamp)
+    {
+        var count = stream.Length / WalRecord.BinaryLength;
+        if (count == 0)
+            return 0;
+
+        //Check few last records to speedup
+        {
+            var lastCount = (int)Math.Min(ScanLastCount, count);
+            Span<byte> buffer = stackalloc byte[lastCount * WalRecord.BinaryLength];
+            stream.Seek((count - lastCount) * WalRecord.BinaryLength, SeekOrigin.Begin);
+            stream.ReadExactly(buffer);
+            for (var i = 0; i < lastCount; i++)
+            {
+                var timespan = MemoryMarshal.Read<long>(buffer.Slice((lastCount - i - 1) * WalRecord.BinaryLength));
+                if (timespan <= lastAppliedTimestamp)
+                {
+                    return count - i;
+                }
+            }
+        }
+
+        long l = 0;
+        long r = count;
+
+        while (r - l + 1 > WalMmfScanCountThreshold)
+        {
+            var m = l + (r - l) / 2;
+            stream.Seek(m * WalRecord.BinaryLength, SeekOrigin.Begin);
+            long mV = 0;
+            stream.ReadExactly(Utils.ToSpan(ref mV, Marshal.SizeOf<long>()));
+            if (mV <= lastAppliedTimestamp)
+            {
+                l = m + 1;
+            }
+            else
+            {
+                r = m;
+            }
+        }
+
+        using var mmf = MemoryMappedFile.CreateFromFile(stream, null, 0,
+            MemoryMappedFileAccess.ReadWrite,
+            HandleInheritability.None, true);
+        using var accessor = mmf.CreateViewAccessor(0, count * WalRecord.BinaryLength);
+
+        while (l < r)
+        {
+            var m = l + (r - l) / 2;
+            var mV = accessor.ReadInt64(m * WalRecord.BinaryLength);
+            if (mV <= lastAppliedTimestamp)
+            {
+                l = m + 1;
+            }
+            else
+            {
+                r = m;
+            }
+        }
+
+        return l;
     }
 
     private record WalAckRecord(UpdateColor UpdateColor, TaskCompletionSource TaskCompletionSource);
@@ -165,6 +261,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
     {
         _walChannel.Writer.TryComplete();
         _groupedCommitTask.GetAwaiter().GetResult();
+        _commitedChannel.Writer.TryComplete();
 
         _walFileStream.Dispose();
     }
@@ -173,6 +270,8 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
     {
         _walChannel.Writer.TryComplete();
         await _groupedCommitTask;
+        _commitedChannel.Writer.TryComplete();
+
         await _walFileStream.DisposeAsync();
     }
 }

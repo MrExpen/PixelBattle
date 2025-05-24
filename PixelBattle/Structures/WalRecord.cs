@@ -1,9 +1,11 @@
-﻿using PixelBattle.Binary;
+﻿using System.Runtime.InteropServices;
+using PixelBattle.Binary;
 
 namespace PixelBattle.Structures;
 
 [Serializable]
-public readonly struct WalRecord : IBinaryLength, IBinaryWritable
+[StructLayout(LayoutKind.Sequential)]
+public readonly struct WalRecord : IBinaryLength, IBinaryWritable, IBinaryReadable<WalRecord>
 {
     public static int BinaryLength => 25;
 
@@ -34,4 +36,6 @@ public readonly struct WalRecord : IBinaryLength, IBinaryWritable
         Utils.Write(this, buffer, BinaryLength);
         return BinaryLength;
     }
+
+    public static WalRecord Read(ReadOnlySpan<byte> buffer) => Utils.Read<WalRecord>(buffer, BinaryLength);
 }
