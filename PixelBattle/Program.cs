@@ -17,7 +17,7 @@ await using var db1 = await PixelBattleDatabase.OpenAsync(path);
 
 var sw = Stopwatch.StartNew();
 List<Task> tasks = [];
-for (int i = 0; i < 10_000_000; i++)
+for (long i = 0; i < 5_000_000_000; i++)
 {
     var task = db1.SetAsync(Random.Shared.Next(0, db1.Width), Random.Shared.Next(0, db1.Height),
         (byte)Random.Shared.Next());

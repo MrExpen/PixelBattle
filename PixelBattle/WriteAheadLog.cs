@@ -1,7 +1,6 @@
 ﻿using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
-using System.Threading.Tasks.Sources;
 using PixelBattle.Binary;
 using PixelBattle.Structures;
 
@@ -9,13 +8,12 @@ namespace PixelBattle;
 
 public class WriteAheadLog : IAsyncDisposable, IDisposable
 {
-    private const long WalMmfScanCountThreshold = 1024 * 1024;
     private const int ScanLastCount = 5;
     private const int WalBufferSize = 4096;
     private const uint Version = 1;
 
     //TODO get from constructor
-    private const int WalMaxBatch = 4096;
+    private const int WalMaxBatch = 10240;
     private const double BatchIntervalMicroseconds = 0;
 
     private readonly TimeProvider _timeProvider;
@@ -43,7 +41,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
     public async Task AppendAsync(UpdateColor record)
     {
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        
+
         await _walChannel.Writer.WriteAsync(new WalAckRecord(record, tcs));
 
         await tcs.Task;
@@ -214,29 +212,13 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
             }
         }
 
-        long l = 0;
-        long r = count;
-
-        while (r - l + 1 > WalMmfScanCountThreshold)
-        {
-            var m = l + (r - l) / 2;
-            stream.Seek(m * WalRecord.BinaryLength, SeekOrigin.Begin);
-            long mV = 0;
-            stream.ReadExactly(Utils.ToSpan(ref mV, Marshal.SizeOf<long>()));
-            if (mV <= lastAppliedTimestamp)
-            {
-                l = m + 1;
-            }
-            else
-            {
-                r = m;
-            }
-        }
 
         using var mmf = MemoryMappedFile.CreateFromFile(stream, null, 0,
-            MemoryMappedFileAccess.ReadWrite,
-            HandleInheritability.None, true);
-        using var accessor = mmf.CreateViewAccessor(0, (r - l + 1) * WalRecord.BinaryLength);
+            MemoryMappedFileAccess.ReadWrite, HandleInheritability.None, true);
+        using var accessor = mmf.CreateViewAccessor();
+
+        long l = 0;
+        long r = count;
 
         while (l < r)
         {
