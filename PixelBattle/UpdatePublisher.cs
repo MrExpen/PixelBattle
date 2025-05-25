@@ -22,6 +22,7 @@ public sealed class UpdatePublisher : IDisposable
         {
             foreach (var channel in _channels)
             {
+                // TODO use own type instead of Channel because of locking each time
                 var success = channel.Writer
                     .TryWrite(new PublishedUpdate(record.Timestamp, newChunkVersion, record.X, record.Y, record.Color));
 
