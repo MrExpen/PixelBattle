@@ -14,7 +14,7 @@ public class UpdatePublisherWrapper : IAsyncEnumerable<PublishedUpdate>
 
     public IAsyncEnumerator<PublishedUpdate> GetAsyncEnumerator(CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException();
+        return new AsyncEnumerator(_updatePublisher, _updatePublisher.Subscribe());
     }
 
     private class AsyncEnumerator : IAsyncEnumerator<PublishedUpdate>
@@ -30,9 +30,7 @@ public class UpdatePublisherWrapper : IAsyncEnumerable<PublishedUpdate>
 
         public async ValueTask<bool> MoveNextAsync()
         {
-            var result = await _channel.Reader.WaitToReadAsync();
-
-            return result && _channel.Reader.TryRead(out _current);
+            return await _channel.Reader.WaitToReadAsync() && _channel.Reader.TryRead(out _current);
         }
 
         private PublishedUpdate _current;

@@ -1,48 +1,46 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using PixelBattle;
 
 const string path = "test.pbdexpn";
 
 await using (var db = PixelBattleDatabase.Create(path, 1024, 1024, 4096)) ;
 
+List<Task> tasks = [];
+await using var db1 = await PixelBattleDatabase.OpenAsync(path);
+
+var enumerable = db1.GetUpdateEnumerable();
+
+var taskPrint = Task.Run(async void () =>
 {
-    List<Task> tasks = [];
-    await using var db1 = await PixelBattleDatabase.OpenAsync(path);
-
-    var sw = Stopwatch.StartNew();
-    for (long i = 0; i < 10_000_000; i++)
+    try
     {
-        var task = db1.SetAsync(Random.Shared.Next(0, db1.Width), Random.Shared.Next(0, db1.Height),
-            (byte)Random.Shared.Next());
-        tasks.Add(task);
+        await foreach (var update in enumerable)
+        {
+            Console.WriteLine(update);
+        }
+
+        Console.WriteLine("done");
     }
-
-    await Task.WhenAll(tasks);
-
-    Console.WriteLine(sw.Elapsed);
-
-    long sum1 = 0;
-    for (int i = 0; i < db1.ChunksCount; i++)
+    catch (Exception e)
     {
-        sum1 += db1.GetChunkVersion(i);
+        Console.WriteLine(e);
     }
+});
 
-    Console.WriteLine(sum1);
+var sw = Stopwatch.StartNew();
+for (long i = 0; i < 1_000_000; i++)
+{
+    var task = db1.SetAsync(Random.Shared.Next(0, db1.Width), Random.Shared.Next(0, db1.Height),
+        (byte)Random.Shared.Next());
+    tasks.Add(task);
 }
 
-await using var db2 = await PixelBattleDatabase.OpenAsync(path);
+await Task.WhenAll(tasks);
+Console.WriteLine(sw.Elapsed);
 
-long sum = 0;
-for (int i = 0; i < db2.ChunksCount; i++)
-{
-    var version = db2.GetChunkVersion(i);
-    sum += version;
-    Console.WriteLine($"{i,-3}: {version,-5}");
-}
 
-Console.WriteLine(sum);
+await Task.Delay(TimeSpan.FromMinutes(5));
 
 Console.WriteLine();

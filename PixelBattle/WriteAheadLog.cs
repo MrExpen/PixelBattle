@@ -212,6 +212,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
         long l = 0;
         long r = count;
 
+        //TODO Если есть несколько одинаковых элементов, вернуть первый, иначе вернуть справа от единственного элемента
         while (l < r)
         {
             var m = l + (r - l) / 2;

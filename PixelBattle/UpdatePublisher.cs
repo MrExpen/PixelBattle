@@ -5,33 +5,15 @@ namespace PixelBattle;
 
 public sealed class UpdatePublisher : IDisposable
 {
-    private const int MaxConsumerLag = 1024;
-
     private readonly Lock _lock;
     private readonly List<Channel<PublishedUpdate>> _channels;
-    private readonly List<Channel<PublishedUpdate>> _completedChannels;
     private readonly UpdatePublisherWrapper _wrapper;
 
     public UpdatePublisher()
     {
         _lock = new Lock();
         _channels = [];
-        _completedChannels = [];
         _wrapper = new UpdatePublisherWrapper(this);
-    }
-
-    private void ClearCompleted()
-    {
-        // Todo start this in background
-        lock (_lock)
-        {
-            foreach (var completedChannel in _completedChannels)
-            {
-                _channels.Remove(completedChannel);
-            }
-
-            _completedChannels.Clear();
-        }
     }
 
     public void Publish(long newChunkVersion, ref WalRecord record)
@@ -45,9 +27,7 @@ public sealed class UpdatePublisher : IDisposable
 
                 if (!success)
                 {
-                    //TODO remove on success=false
-                    channel.Writer.TryComplete();
-                    _completedChannels.Add(channel);
+                    //TODO log
                 }
             }
         }
@@ -55,10 +35,9 @@ public sealed class UpdatePublisher : IDisposable
 
     public Channel<PublishedUpdate> Subscribe()
     {
-        var channel = Channel.CreateBounded<PublishedUpdate>(new BoundedChannelOptions(MaxConsumerLag)
+        var channel = Channel.CreateUnbounded<PublishedUpdate>(new UnboundedChannelOptions
         {
             AllowSynchronousContinuations = false,
-            FullMode = BoundedChannelFullMode.Wait,
             SingleWriter = true,
             SingleReader = true,
         });
@@ -77,7 +56,6 @@ public sealed class UpdatePublisher : IDisposable
         {
             channel.Writer.TryComplete();
             _channels.Remove(channel);
-            _completedChannels.Remove(channel);
         }
     }
 
@@ -93,7 +71,6 @@ public sealed class UpdatePublisher : IDisposable
             }
 
             _channels.Clear();
-            _completedChannels.Clear();
         }
     }
 }

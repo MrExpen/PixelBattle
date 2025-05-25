@@ -16,4 +16,10 @@ public readonly struct PublishedUpdate
         Y = y;
         Color = color;
     }
+
+    public override string ToString()
+    {
+        return
+            $"{nameof(Timestamp)}: {Timestamp}, {nameof(ChunkVersion)}: {ChunkVersion}, {nameof(X)}: {X}, {nameof(Y)}: {Y}, {nameof(Color)}: {Color}";
+    }
 }
