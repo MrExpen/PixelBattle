@@ -227,7 +227,14 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
             }
         }
 
-        return l;
+        if (l + 1 >= count ||
+            accessor.ReadInt64(l * WalRecord.BinaryLength) != lastAppliedTimestamp ||
+            accessor.ReadInt64((l + 1) * WalRecord.BinaryLength) == lastAppliedTimestamp)
+        {
+            return l;
+        }
+
+        return l + 1;
     }
 
     private record WalAckRecord(UpdateColor UpdateColor, TaskCompletionSource TaskCompletionSource);

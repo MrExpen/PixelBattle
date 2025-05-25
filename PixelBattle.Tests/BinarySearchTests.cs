@@ -8,7 +8,8 @@ public class BinarySearchTests
     [InlineData(nameof(BinarySearch1), "1, 2, 3, 4, 5, 5, 5, 5, 6, 6, 6, 7, 7, 8", 5, 4)]
     [InlineData(nameof(BinarySearch1), "1, 2, 3, 4, 5, 5, 5, 5, 6, 6, 6, 7, 7, 8", 9, 14)]
     [InlineData(nameof(BinarySearch1), "1, 2, 3, 4, 5, 5, 5, 5, 6, 6, 6, 7, 7, 8", 0, 0)]
-    [InlineData(nameof(BinarySearch1), "1, 2, 3, 4, 5, 5, 5, 5, 6, 6, 6, 7, 7, 8", 1, 0)]
+    [InlineData(nameof(BinarySearch1), "1, 2, 3, 4, 5, 5, 5, 5, 6, 6, 6, 7, 7, 8", 1, 1)]
+    [InlineData(nameof(BinarySearch1), "1, 2, 3, 4, 5, 5, 5, 5, 6, 6, 6, 7, 7, 8", 4, 4)]
     public void AlgorithmChoice(string funcName, string arrayString, long search, int expectedIndex)
     {
         //Arrange
@@ -25,8 +26,8 @@ public class BinarySearchTests
         //Assert
         Assert.Equal(expectedIndex, index);
     }
-    
-    
+
+
     private static long BinarySearch1(long[] array, long search)
     {
         long l = 0;
@@ -46,6 +47,11 @@ public class BinarySearchTests
             }
         }
 
-        return l;
+        if (l + 1 >= array.Length || array[l] != search || array[l + 1] == search)
+        {
+            return l;
+        }
+
+        return l + 1;
     }
 }
