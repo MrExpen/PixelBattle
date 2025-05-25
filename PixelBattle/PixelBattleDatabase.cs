@@ -30,6 +30,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
     private readonly FileStream _dbFileStream;
     private readonly MemoryMappedFile _memoryMappedFile;
     private readonly MemoryMappedViewAccessor _accessor;
+    private readonly UpdatePublisher _updatePublisher;
     private Task? _applyWalTask;
 
     private PixelBattleDatabase(
@@ -49,12 +50,15 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         Width = width;
         Height = height;
         ChunkSize = chunkSize;
+        _updatePublisher = new UpdatePublisher();
         _chunkLocks = new Lock[Width * Height / ChunkSize];
         for (var i = 0; i < _chunkLocks.Length; i++)
         {
             _chunkLocks[i] = new Lock();
         }
     }
+
+    public IAsyncEnumerable<PublishedUpdate> GetUpdateEnumerable() => _updatePublisher.GetAsyncEnumerable();
 
     public async Task SetAsync(int x, int y, byte color)
     {
@@ -78,14 +82,15 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         }
     }
 
-    public byte[] GetChunkWithVersion(int chunkNumber)
+    public byte[] GetChunkDataWithVersion(int chunkNumber)
     {
         var buffer = new byte[ChunkSizeWithMetadata];
-        WriteChunkWithVersion(buffer, chunkNumber);
+        WriteChunkDataWithVersion(buffer, chunkNumber);
         return buffer;
     }
 
-    public void WriteChunkWithVersion(Span<byte> buffer, int chunkNumber)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void WriteChunkDataWithVersion(Span<byte> buffer, int chunkNumber)
     {
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(chunkNumber, ChunksCount);
 
@@ -127,7 +132,9 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
             long lastAppliedTimestamp = -1;
             for (var batchSize = 0; batchSize < MaxApplyBatchSize && reader.TryRead(out var record); batchSize++)
             {
-                UpdateChunkWithLock(ref record);
+                var chunkVersion = UpdateChunkAndPublish(ref record);
+                _updatePublisher.Publish(chunkVersion, ref record);
+
                 lastAppliedTimestamp = record.Timestamp;
             }
 
@@ -153,7 +160,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void UpdateChunkWithLock(ref WalRecord record)
+    private long UpdateChunkAndPublish(ref WalRecord record)
     {
         var offset = record.Y * Width + record.X;
         var chunkNumber = offset / ChunkSize;
@@ -164,7 +171,10 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         lock (_chunkLocks[chunkNumber])
         {
             _accessor.Write(colorOffset, record.Color);
-            _accessor.Write(versionOffset, _accessor.ReadInt64(versionOffset) + 1); // Version increment
+            var incrementedVersion = _accessor.ReadInt64(versionOffset) + 1;
+            _accessor.Write(versionOffset, incrementedVersion);
+
+            return incrementedVersion;
         }
     }
 
@@ -184,6 +194,8 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         _accessor.Dispose();
         _memoryMappedFile.Dispose();
         _dbFileStream.Dispose();
+
+        _updatePublisher.Dispose();
     }
 
     public async ValueTask DisposeAsync()
@@ -197,6 +209,8 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         _accessor.Dispose();
         _memoryMappedFile.Dispose();
         await _dbFileStream.DisposeAsync();
+
+        _updatePublisher.Dispose();
     }
 
     public static PixelBattleDatabase Create(string path, int width, int height, int chunkSize)
