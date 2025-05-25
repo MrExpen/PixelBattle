@@ -14,7 +14,6 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
 
     //TODO get from constructor
     private const int WalMaxBatch = 10240;
-    private const double BatchIntervalMicroseconds = 0;
 
     private readonly TimeProvider _timeProvider;
     private readonly FileStream _walFileStream;
@@ -51,8 +50,6 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
     {
         var reader = _walChannel.Reader;
         var writer = _commitedChannel.Writer;
-        var deltaFreq = (long)(BatchIntervalMicroseconds * TimeSpan.TicksPerSecond * TimeSpan.TicksPerMicrosecond /
-                               _timeProvider.TimestampFrequency);
 
         var batch = new List<WalAckRecord>(WalMaxBatch);
         var commitedBatch = new List<WalRecord>(WalMaxBatch);
@@ -60,15 +57,10 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
         {
             try
             {
-                var startTimestamp = _timeProvider.GetTimestamp();
-                do
+                while (batch.Count < WalMaxBatch && reader.TryRead(out var record))
                 {
-                    while (batch.Count < WalMaxBatch && reader.TryRead(out var record))
-                    {
-                        batch.Add(record);
-                    }
-                } while (_timeProvider.GetTimestamp() - startTimestamp < deltaFreq && batch.Count < WalMaxBatch);
-
+                    batch.Add(record);
+                }
 
                 try
                 {
@@ -224,7 +216,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
         {
             var m = l + (r - l) / 2;
             var mV = accessor.ReadInt64(m * WalRecord.BinaryLength);
-            if (mV <= lastAppliedTimestamp)
+            if (mV < lastAppliedTimestamp)
             {
                 l = m + 1;
             }

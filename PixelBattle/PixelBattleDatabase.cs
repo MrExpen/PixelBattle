@@ -66,24 +66,38 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         await _writeAheadLog.AppendAsync(new UpdateColor(x, y, color));
     }
 
-    public byte[] GetChunk(int chunkNumber)
+    public long GetChunkVersion(int chunkNumber)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(chunkNumber, ChunksCount);
+
+        var versionOffset = DbHeaders.BinaryLength + chunkNumber * ChunkSizeWithMetadata;
+
+        lock (_chunkLocks[chunkNumber])
+        {
+            return _accessor.ReadInt64(versionOffset);
+        }
+    }
+
+    public byte[] GetChunkWithVersion(int chunkNumber)
     {
         var buffer = new byte[ChunkSizeWithMetadata];
-        WriteChunk(buffer, chunkNumber);
+        WriteChunkWithVersion(buffer, chunkNumber);
         return buffer;
     }
 
-    public void WriteChunk(Span<byte> buffer, int chunkNumber)
+    public void WriteChunkWithVersion(Span<byte> buffer, int chunkNumber)
     {
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(chunkNumber, ChunksCount);
 
         if (buffer.Length < ChunkSizeWithMetadata)
             throw new InvalidOperationException();
 
+        var offset = (ulong)(DbHeaders.BinaryLength + ChunkSizeWithMetadata * chunkNumber);
+        var trimmedBuffer = buffer[..ChunkSizeWithMetadata];
+
         lock (_chunkLocks[chunkNumber])
         {
-            _accessor.SafeMemoryMappedViewHandle.ReadSpan(
-                (ulong)(DbHeaders.BinaryLength + ChunkSizeWithMetadata * chunkNumber), buffer[..ChunkSizeWithMetadata]);
+            _accessor.SafeMemoryMappedViewHandle.ReadSpan(offset, trimmedBuffer);
         }
     }
 
@@ -130,10 +144,12 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
     {
         var offset = record.Y * Width + record.X;
         var chunkNumber = offset / ChunkSize;
-        var globalOffset = DbHeaders.BinaryLength + (chunkNumber + 1) * ChunkMetadataSize + offset;
+        var chunkOffset = offset % ChunkSize;
+        var versionOffset = DbHeaders.BinaryLength + chunkNumber * ChunkSizeWithMetadata;
+        var colorOffset = versionOffset + ChunkMetadataSize + chunkOffset;
 
-        _accessor.Write(globalOffset, record.Color);
-        _accessor.Write(DbHeaders.BinaryLength + chunkNumber * ChunkSizeWithMetadata, record.Timestamp);
+        _accessor.Write(colorOffset, record.Color);
+        _accessor.Write(versionOffset, _accessor.ReadInt64(versionOffset) + 1); // Version increment
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -141,12 +157,14 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
     {
         var offset = record.Y * Width + record.X;
         var chunkNumber = offset / ChunkSize;
-        var globalOffset = DbHeaders.BinaryLength + (chunkNumber + 1) * ChunkMetadataSize + offset;
+        var chunkOffset = offset % ChunkSize;
+        var versionOffset = DbHeaders.BinaryLength + chunkNumber * ChunkSizeWithMetadata;
+        var colorOffset = versionOffset + ChunkMetadataSize + chunkOffset;
 
         lock (_chunkLocks[chunkNumber])
         {
-            _accessor.Write(globalOffset, record.Color);
-            _accessor.Write(DbHeaders.BinaryLength + chunkNumber * ChunkSizeWithMetadata, record.Timestamp);
+            _accessor.Write(colorOffset, record.Color);
+            _accessor.Write(versionOffset, _accessor.ReadInt64(versionOffset) + 1); // Version increment
         }
     }
 
