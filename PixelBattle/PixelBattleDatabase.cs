@@ -26,7 +26,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
     public int ChunksCount => _chunkLocks.Length;
 
     private readonly Lock[] _chunkLocks;
-    private readonly WriteAheadLog _writeAheadLog;
+    private readonly WAL _writeAheadLog;
     private readonly FileStream _dbFileStream;
     private readonly MemoryMappedFile _memoryMappedFile;
     private readonly MemoryMappedViewAccessor _accessor;
@@ -35,7 +35,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
 
     private PixelBattleDatabase(
         FileStream dbFileStream,
-        WriteAheadLog writeAheadLog,
+        WAL writeAheadLog,
         MemoryMappedFile memoryMappedFile,
         MemoryMappedViewAccessor accessor,
         int width,
@@ -217,7 +217,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
     {
         Debug.Assert(MagicBytes.Length == Marshal.SizeOf<ulong>());
         FileStream? dbStream = null;
-        WriteAheadLog? wal = null;
+        WAL? wal = null;
         MemoryMappedFile? memoryMappedFile = null;
         MemoryMappedViewAccessor? accessor = null;
         PixelBattleDatabase? pixelBattleDatabase = null;
@@ -235,7 +235,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
 
             dbStream.Write(Utils.AsSpan(ref headers));
 
-            wal = WriteAheadLog.Create(GetWalFileName(path));
+            wal = WAL.Create(GetWalFileName(path));
 
             memoryMappedFile = MemoryMappedFile.CreateFromFile(dbStream, null, 0, MemoryMappedFileAccess.ReadWrite,
                 HandleInheritability.None, true);
@@ -278,7 +278,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
         Debug.Assert(MagicBytes.Length == Marshal.SizeOf<ulong>());
 
         FileStream? dbStream = null;
-        WriteAheadLog? wal = null;
+        WAL? wal = null;
         MemoryMappedFile? memoryMappedFile = null;
         MemoryMappedViewAccessor? accessor = null;
         PixelBattleDatabase? pixelBattleDatabase = null;
@@ -310,7 +310,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
                 throw new InvalidOperationException();
             }
 
-            wal = await WriteAheadLog.OpenOrCreateAsync(GetWalFileName(path), dbHeaders.LastAppliedTimestamp);
+            wal = await WAL.OpenOrCreateAsync(GetWalFileName(path), dbHeaders.LastAppliedTimestamp);
 
 
             memoryMappedFile = MemoryMappedFile.CreateFromFile(dbStream, null, 0, MemoryMappedFileAccess.ReadWrite,

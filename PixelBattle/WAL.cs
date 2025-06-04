@@ -6,7 +6,7 @@ using PixelBattle.Structures;
 
 namespace PixelBattle;
 
-public class WriteAheadLog : IAsyncDisposable, IDisposable
+public class WAL : IAsyncDisposable, IDisposable
 {
     private const int ScanLastCount = 5;
     private const int WalBufferSize = 4096;
@@ -23,7 +23,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
 
     public ChannelReader<WalRecord> CommitedReader => _commitedChannel.Reader;
 
-    private WriteAheadLog(FileStream walFileStream, Channel<WalRecord> commitedChannel)
+    private WAL(FileStream walFileStream, Channel<WalRecord> commitedChannel)
     {
         _walFileStream = walFileStream;
         _timeProvider = TimeProvider.System;
@@ -107,7 +107,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
         }
     }
 
-    public static WriteAheadLog Create(string path)
+    public static WAL Create(string path)
     {
         FileStream? stream = null;
         try
@@ -128,7 +128,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
                 AllowSynchronousContinuations = false,
             });
 
-            return new WriteAheadLog(stream, channel);
+            return new WAL(stream, channel);
         }
         catch
         {
@@ -137,7 +137,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
         }
     }
 
-    public static async Task<WriteAheadLog> OpenOrCreateAsync(string path, long lastAppliedTimestamp)
+    public static async Task<WAL> OpenOrCreateAsync(string path, long lastAppliedTimestamp)
     {
         FileStream? stream = null;
         try
@@ -169,7 +169,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
                 await writer.WriteAsync(record);
             }
 
-            return new WriteAheadLog(stream, channel);
+            return new WAL(stream, channel);
         }
         catch
         {
