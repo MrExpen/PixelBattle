@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace PixelBattle.Binary;
 
-internal static class Utils
+public static class Utils
 {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static T Read<T>(ReadOnlySpan<byte> buffer) where T : struct, IBinaryLength
@@ -25,7 +25,7 @@ internal static class Utils
         if (source.Length < size)
             throw new InvalidOperationException();
 
-        var destination = ToSpan(ref result, size);
+        var destination = AsSpan(ref result, size);
         source[..size].CopyTo(destination);
     }
 
@@ -51,19 +51,19 @@ internal static class Utils
         if (destination.Length < size)
             throw new InvalidOperationException();
 
-        var source = ToSpan(ref value, size);
+        var source = AsSpan(ref value, size);
         source.CopyTo(destination);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static Span<byte> ToSpan<T>(ref T value, int size) where T : struct
+    public static Span<byte> AsSpan<T>(ref T value, int size) where T : struct
     {
         return MemoryMarshal.CreateSpan(ref Unsafe.As<T, byte>(ref value), size);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static Span<byte> ToSpan<T>(ref T value) where T : struct, IBinaryLength
+    public static Span<byte> AsSpan<T>(ref T value) where T : struct, IBinaryLength
     {
-        return ToSpan(ref value, T.BinaryLength);
+        return AsSpan(ref value, T.BinaryLength);
     }
 }

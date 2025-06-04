@@ -73,7 +73,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
                             walAckRecord.UpdateColor.Y,
                             walAckRecord.UpdateColor.Color
                         );
-                        _walFileStream.Write(Utils.ToSpan(ref walRecord));
+                        _walFileStream.Write(Utils.AsSpan(ref walRecord));
                         commitedBatch.Add(walRecord);
                     }
 
@@ -165,7 +165,7 @@ public class WriteAheadLog : IAsyncDisposable, IDisposable
             while (stream.Position + WalRecord.BinaryLength <= stream.Length)
             {
                 WalRecord record = default;
-                stream.ReadExactly(Utils.ToSpan(ref record));
+                stream.ReadExactly(Utils.AsSpan(ref record));
                 await writer.WriteAsync(record);
             }
 

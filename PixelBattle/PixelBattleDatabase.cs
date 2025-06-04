@@ -233,7 +233,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
 
             var headers = new DbHeaders(MagicNumber, 0, CurrentVersion, width, height, chunkSize);
 
-            dbStream.Write(Utils.ToSpan(ref headers));
+            dbStream.Write(Utils.AsSpan(ref headers));
 
             wal = WriteAheadLog.Create(GetWalFileName(path));
 
@@ -287,7 +287,7 @@ public sealed class PixelBattleDatabase : IDisposable, IAsyncDisposable
             dbStream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
 
             DbHeaders dbHeaders = default;
-            dbStream.ReadExactly(Utils.ToSpan(ref dbHeaders));
+            dbStream.ReadExactly(Utils.AsSpan(ref dbHeaders));
 
             if (dbHeaders.MagicNumber != MagicNumber)
             {
