@@ -1,7 +1,4 @@
-﻿using System.Runtime.InteropServices;
-using PixelBattle.Structures;
-
-namespace PixelBattle.Tests;
+﻿namespace PixelBattle.Tests;
 
 public class SerializationTests
 {

@@ -8,4 +8,8 @@
         <LangVersion>default</LangVersion>
     </PropertyGroup>
 
+    <ItemGroup>
+      <PackageReference Include="System.IO.Hashing" Version="9.0.5" />
+    </ItemGroup>
+
 </Project>

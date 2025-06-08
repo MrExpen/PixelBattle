@@ -2,5 +2,5 @@
 
 public interface IBinaryWritable
 {
-    public int Write(Span<byte> buffer);
+    public bool TryWrite(Span<byte> buffer, out int bytesWritten);
 }

@@ -1,6 +1,6 @@
 ﻿namespace PixelBattle.Binary;
 
-public interface IBinaryReadable<out T> where T : struct
+public interface IBinaryReadable<T> where T : allows ref struct
 {
-    public static abstract T Read(ReadOnlySpan<byte> buffer);
+    public static abstract bool TryRead(ReadOnlySpan<byte> buffer, out T result);
 }

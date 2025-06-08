@@ -1,54 +1,75 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using PixelBattle.Binary;
 
 namespace PixelBattle.Structures;
 
 [Serializable]
-[StructLayout(LayoutKind.Explicit)]
 public readonly struct DbHeaders : IBinarySerializable<DbHeaders>
 {
+    public static readonly ulong DefaultMagicNumber = MemoryMarshal.Read<ulong>("PBDFEXPN"u8.ToArray());
+
     public static int BinaryLength => 32;
 
-    public const int MagicNumberOffset = 0;
-    public const int LastAppliedTimestampOffset = 8;
-    public const int VersionOffset = 16;
-    public const int WidthOffset = 20;
-    public const int HeightOffset = 24;
-    public const int ChunkSizeOffset = 28;
+    private const int MagicNumberOffset = 0;
+    private const int VersionOffset = 8;
+    private const int LastAppliedWalIndexOffset = 12;
+    private const int WidthOffset = 20;
+    private const int HeightOffset = 24;
+    private const int ChunkSizeOffset = 28;
 
-    [FieldOffset(MagicNumberOffset)] 
     public readonly ulong MagicNumber;
-
-    [FieldOffset(LastAppliedTimestampOffset)]
-    public readonly long LastAppliedTimestamp;
-
-    [FieldOffset(VersionOffset)] 
     public readonly uint Version;
-    
-    [FieldOffset(WidthOffset)] 
+    public readonly long LastAppliedWalIndex;
     public readonly int Width;
-    
-    [FieldOffset(HeightOffset)] 
     public readonly int Height;
-
-    [FieldOffset(ChunkSizeOffset)] 
     public readonly int ChunkSize;
 
-    public DbHeaders(ulong magicNumber, long lastAppliedTimestamp, uint version, int width, int height, int chunkSize)
+    public DbHeaders(ulong magicNumber, uint version, long lastAppliedWalIndex, int width, int height, int chunkSize)
     {
         MagicNumber = magicNumber;
-        LastAppliedTimestamp = lastAppliedTimestamp;
         Version = version;
+        LastAppliedWalIndex = lastAppliedWalIndex;
         Width = width;
         Height = height;
         ChunkSize = chunkSize;
     }
 
-    public static DbHeaders Read(ReadOnlySpan<byte> buffer) => Utils.Read<DbHeaders>(buffer, BinaryLength);
-
-    public int Write(Span<byte> buffer)
+    public static bool TryRead(ReadOnlySpan<byte> buffer, out DbHeaders result)
     {
-        Utils.Write(this, buffer, BinaryLength);
-        return BinaryLength;
+        if (buffer.Length < BinaryLength)
+        {
+            result = default;
+            return false;
+        }
+
+        result = new DbHeaders(
+            BinaryPrimitives.ReadUInt64LittleEndian(buffer[MagicNumberOffset..]),
+            BinaryPrimitives.ReadUInt32LittleEndian(buffer[VersionOffset..]),
+            BinaryPrimitives.ReadInt64LittleEndian(buffer[LastAppliedWalIndexOffset..]),
+            BinaryPrimitives.ReadInt32LittleEndian(buffer[WidthOffset..]),
+            BinaryPrimitives.ReadInt32LittleEndian(buffer[HeightOffset..]),
+            BinaryPrimitives.ReadInt32LittleEndian(buffer[ChunkSizeOffset..])
+        );
+        return true;
+    }
+
+    public bool TryWrite(Span<byte> buffer, out int bytesWritten)
+    {
+        if (buffer.Length < BinaryLength)
+        {
+            bytesWritten = 0;
+            return false;
+        }
+
+        BinaryPrimitives.WriteUInt64LittleEndian(buffer[MagicNumberOffset..], MagicNumber);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer[VersionOffset..], Version);
+        BinaryPrimitives.WriteInt64LittleEndian(buffer[LastAppliedWalIndexOffset..], LastAppliedWalIndex);
+        BinaryPrimitives.WriteInt32LittleEndian(buffer[WidthOffset..], Width);
+        BinaryPrimitives.WriteInt32LittleEndian(buffer[HeightOffset..], Height);
+        BinaryPrimitives.WriteInt32LittleEndian(buffer[ChunkSizeOffset..], ChunkSize);
+
+        bytesWritten = BinaryLength;
+        return true;
     }
 }
