@@ -6,28 +6,30 @@ namespace PixelBattle.Tests;
 
 public class SizeTests
 {
-    [Theory(Skip = "Disabled")]
-    [InlineData(typeof(DbHeaders), 20)]
-    [InlineData(typeof(WalRecord), 17)]
-    public void SizeOfFields(Type type, int size)
+    public static TheoryData<Type> BinaryLengthTypes =>
+        new(typeof(DbHeaders).Assembly.GetTypes()
+            .Where(x => x.IsAssignableTo(typeof(IBinaryLength)))
+            .Where(x => x is { IsAbstract: false, IsInterface: false })
+        );
+
+    [Theory]
+    [MemberData(nameof(BinaryLengthTypes))]
+    public void SizeOfFieldsBinaryLength(Type type)
     {
         var fields = type.GetFields().Where(x => !x.IsStatic);
-        var membersSize = fields.Select(x => Marshal.SizeOf(x.FieldType)).Sum();
+        var membersSize = fields.Select(x => GetTypeSize(x.FieldType)).Sum();
+        var size = (int)type.GetProperty(nameof(IBinaryLength.BinaryLength))!.GetValue(null)!;
 
         Assert.Equal(size, membersSize);
     }
 
-    [Theory]
-    [InlineData(typeof(DbHeaders))]
-    [InlineData(typeof(WalRecord))]
-    public void SizeOfFieldsBinaryLength(Type type)
+    private static int GetTypeSize(Type t)
     {
-        var fields = type.GetFields().Where(x => !x.IsStatic);
-        var membersSize = fields.Select(x =>
-            x.FieldType.IsEnum ? Marshal.SizeOf(Enum.GetUnderlyingType(x.FieldType)) : Marshal.SizeOf(x.FieldType)
-        ).Sum();
-        var size = (int)type.GetProperty(nameof(IBinaryLength.BinaryLength))!.GetValue(null)!;
+        if (t.IsPrimitive)
+        {
+            return t.IsEnum ? Marshal.SizeOf(Enum.GetUnderlyingType(t)) : Marshal.SizeOf(t);
+        }
 
-        Assert.Equal(size, membersSize);
+        throw new NotImplementedException();
     }
 }
