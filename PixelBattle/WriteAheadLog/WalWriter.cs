@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Threading.Channels;
 using PixelBattle.Extensions;
 using PixelBattle.Structures;
+using PixelBattle.Structures.Enums;
 
 namespace PixelBattle.WriteAheadLog;
 
@@ -17,12 +18,14 @@ public sealed class WalWriter : IDisposable, IAsyncDisposable
     private Task? _groupedCommitTask;
     private readonly WalWriterOptions _options;
     private readonly int _salt;
+    private ulong _currentSequenceNumber;
 
-    private WalWriter(FileStream walFileStream, int salt, WalWriterOptions options)
+    private WalWriter(FileStream walFileStream, int salt, ulong currentSequenceNumber, WalWriterOptions options)
     {
         _timeProvider = TimeProvider.System;
         _walFileStream = walFileStream;
         _options = options;
+        _currentSequenceNumber = currentSequenceNumber;
         _salt = salt;
         _walChannel = Channel.CreateBounded<WalAckRecord>(new BoundedChannelOptions(_options.MaxQueueSize)
         {
@@ -69,7 +72,9 @@ public sealed class WalWriter : IDisposable, IAsyncDisposable
                 {
                     var walRecord = new WalRecord(
                         _timeProvider.GetUtcNow().Ticks,
+                        ++_currentSequenceNumber,
                         _salt,
+                        OperationType.Set,
                         walAckRecord.Color
                     );
                     if (!walRecord.TryWriteWithCrc32(buffer, out var written))
@@ -142,7 +147,7 @@ public sealed class WalWriter : IDisposable, IAsyncDisposable
             stream.Write(buffer);
             stream.Flush(true);
 
-            var writer = new WalWriter(stream, headers.Salt, options ?? new WalWriterOptions());
+            var writer = new WalWriter(stream, headers.Salt, 0, options ?? new WalWriterOptions());
 
             writer.Start();
             return writer;
@@ -180,7 +185,10 @@ public sealed class WalWriter : IDisposable, IAsyncDisposable
             stream.Flush(true);
             stream.Seek(0, SeekOrigin.End);
 
-            return new WalWriter(stream, headers.Salt, options ?? new WalWriterOptions());
+            throw new NotImplementedException();
+
+            //TODO read SequenceNumber
+            return new WalWriter(stream, headers.Salt, 0, options ?? new WalWriterOptions());
         }
         catch
         {

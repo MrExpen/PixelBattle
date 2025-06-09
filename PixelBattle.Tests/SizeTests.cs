@@ -20,12 +20,12 @@ public class SizeTests
         var membersSize = fields.Select(x => GetTypeSize(x.FieldType)).Sum();
         var size = (int)type.GetProperty(nameof(IBinaryLength.BinaryLength))!.GetValue(null)!;
 
-        Assert.Equal(size, membersSize);
+        Assert.Equal(membersSize, size);
     }
 
     private static int GetTypeSize(Type t)
     {
-        if (t.IsPrimitive)
+        if (t.IsPrimitive || t.IsEnum)
         {
             return t.IsEnum ? Marshal.SizeOf(Enum.GetUnderlyingType(t)) : Marshal.SizeOf(t);
         }

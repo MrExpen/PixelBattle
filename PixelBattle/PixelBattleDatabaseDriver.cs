@@ -46,7 +46,7 @@ public sealed class PixelBattleDatabaseDriver : IDisposable, IAsyncDisposable
         try
         {
             dbStream = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.Read);
-            var headers = new DbHeaders(DbHeaders.DefaultMagicNumber, CurrentVersion, 0, width, height, chunkSize);
+            var headers = new DbHeaders(DbHeaders.DefaultMagicNumber, CurrentVersion, width, height, chunkSize);
 
             var headersLength = DbHeaders.BinaryLength + sizeof(uint);
             Span<byte> buffer = stackalloc byte[headersLength];
